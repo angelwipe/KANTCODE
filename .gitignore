@@ -32,3 +32,19 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Keys and secrets
+Key
+Key.*
+*.key
+
+# Runtime data
+data/resultsva.json
+data/report.json
+*.tmp
