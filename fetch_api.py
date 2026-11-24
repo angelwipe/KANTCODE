@@ -12,7 +12,7 @@ import urllib.request
 
 URL = "http://opendata.trudvsem.ru/api/v1/vacancies/region/39"
 OUT = "data/resultsva.json"
-TEST_DIR = "test"
+TEST_PAPKA = "test"
 
 
 class FetchError(RuntimeError):
@@ -80,13 +80,13 @@ def save_raw(vacancies: list[dict], path=OUT) -> None:
 
 def pick_file() -> str:
     """Список .json из папки test/ или ввод своего пути."""
-    files = sorted(f for f in os.listdir(TEST_DIR) if f.lower().endswith(".json")) if os.path.isdir(TEST_DIR) else []
+    files = sorted(f for f in os.listdir(TEST_PAPKA) if f.lower().endswith(".json")) if os.path.isdir(TEST_PAPKA) else []
     for i, f in enumerate(files, 1):
-        print(f" {i}. {TEST_DIR}/{f}")
+        print(f" {i}. {TEST_PAPKA}/{f}")
     print(" 0. Ввести свой путь")
     c = input("> ").strip()
     if c.isdigit() and 1 <= int(c) <= len(files):
-        return os.path.join(TEST_DIR, files[int(c) - 1])
+        return os.path.join(TEST_PAPKA, files[int(c) - 1])
     if c == "0":
         return input("Путь к .json: ").strip().strip('"')
     raise FetchError("неверный выбор")
