@@ -24,7 +24,7 @@ def extract(payload: dict) -> list[dict]:
     try:
         items = payload["results"]["vacancies"]
     except (KeyError, TypeError) as e:
-        raise FetchError("Неожиданны формат: нет results.vacancies") from e
+        raise FetchError("Неизвестный формат: нет results.vacancies") from e
     return [i["vacancy"] if isinstance(i, dict) and "vacancy" in i else i for i in items]
 
 
