@@ -1,5 +1,5 @@
 """получение сырых вакансий. Выбор источника: API сервера или локальный JSON.
-Результат в data/resultsva.json (это типа так сократил)том же формате, что ответ API (results.vacancies[].vacancy).
+Результат в data/resultsva.json (resultsva сократил от result и vacancy)том же формате, что ответ API (results.vacancies[].vacancy).
 Только стандартная библиотека. Запуск: python source.py  (меню)  или  python source.py api --max 200
 """
 import argparse
