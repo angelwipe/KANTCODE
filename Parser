@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import logging
+import re
+import sys
+from pathlib import Path
+
+JSON_FILENAME = "kantkod_sample_vacancies.json"
+USE_TEST_FOLDER = True
+TEST_FOLDER = "test"
+CLEAN_FILENAME = "clean_vacancies.json"
+ISSUES_FILENAME = "issues_report.json"
+
+
+def resolve_raw_path(use_test: bool) -> Path:
+    base = Path(TEST_FOLDER) if use_test else Path(".")
+    return base / JSON_FILENAME
+
+
+def setup_logging(debug: bool) -> logging.Logger:
+    logger = logging.getLogger("vacancy_parser")
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
+
+    fmt = logging.Formatter(
+        "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    out_handler = logging.StreamHandler(sys.stdout)
+    out_handler.setLevel(logging.INFO)
+    out_handler.setFormatter(fmt)
+
+    err_handler = logging.StreamHandler(sys.stderr)
+    err_handler.setLevel(logging.DEBUG if debug else logging.WARNING)
+    err_handler.setFormatter(fmt)
+
+    logger.addHandler(out_handler)
+    logger.addHandler(err_handler)
+    return logger
+
+
+log = logging.getLogger("vacancy_parser")
+
+
+UNKNOWN_VALUES = {
+    "не указано", "не указана", "не указан",
+    "не указаны", "нет данных", "n/a", "-", "",
+}
+
+VAGUE_TITLES = {"специалист", "менеджер", "работник", "сотрудник", "помощник"}
+
+PROVINCE_ONLY_RE = re.compile(
+    r"^(?:г\.\s*)?[А-ЯЁ][а-яё\-]+(?:ая|ий|ой)?\s+(?:область|край|республика)$",
+    re.IGNORECASE,
+)
+YEARS_EXP_RE = re.compile(r"(\d+)\s*(?:год|года|лет)\s+(?:опыта|работы)", re.IGNORECASE)
+REMOTE_RE = re.compile(r"дистанционн|удал[её]нн", re.IGNORECASE)
+OFFICE_RE = re.compile(r"присутств\w*\s+в\s+офисе|в\s+офисе\s+к", re.IGNORECASE)
+WEEKDAY_RE = re.compile(r"пятидневн|5/2|пн[-–]пт", re.IGNORECASE)
+FLEX_RE = re.compile(r"гибк", re.IGNORECASE)
+
+
+def is_unknown(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in UNKNOWN_VALUES
+    return False
+
+
+def clean_text(value):
+    if is_unknown(value):
+        return None
+    text = re.sub(r"\s+", " ", str(value)).strip()
+    return text or None
+
+
+def clean_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def clean_salary(lo, hi, currency):
+    lo_i, hi_i = clean_int(lo), clean_int(hi)
+    lo_i = lo_i if lo_i and lo_i > 0 else None
+    hi_i = hi_i if hi_i and hi_i > 0 else None
+
+    if lo_i and hi_i and lo_i > hi_i:
+        log.debug("Инвертированный диапазон зарплаты: %s > %s, меняем местами", lo_i, hi_i)
+        lo_i, hi_i = hi_i, lo_i
+
+    if lo_i is None and hi_i is None:
+        return {"min": None, "max": None, "currency": None, "text": None}
+
+    currency = clean_text(currency) or ""
+    if lo_i == hi_i:
+        text = f"{lo_i} {currency}".strip()
+    elif lo_i and hi_i:
+        text = f"{lo_i}-{hi_i} {currency}".strip()
+    elif lo_i:
+        text = f"от {lo_i} {currency}".strip()
+    else:
+        text = f"до {hi_i} {currency}".strip()
+
+    return {"min": lo_i, "max": hi_i, "currency": currency or None, "text": text}
+
+
+def parse_addresses(addr_block):
+    result = []
+    for item in (addr_block or {}).get("address", []) or []:
+        loc = clean_text(item.get("location"))
+        if loc:
+            result.append(loc)
+    return result
+
+
+def is_vague_location(loc: str) -> bool:
+    if PROVINCE_ONLY_RE.match(loc.strip()):
+        return True
+    return "область" in loc.lower() and "," not in loc
+
+
+def detect_issues(v: dict) -> list:
+    issues = []
+
+    req = v.get("requirement") or {}
+    qualification = clean_text(req.get("qualification")) or ""
+    duty = clean_text(v.get("duty")) or ""
+    schedule = clean_text(v.get("schedule")) or ""
+    experience = clean_int(req.get("experience")) or 0
+    salary_lo = clean_int(v.get("salary_min"))
+    salary_hi = clean_int(v.get("salary_max"))
+    title = (clean_text(v.get("job-name")) or "").lower()
+
+    m = YEARS_EXP_RE.search(qualification)
+    if m and int(m.group(1)) > 0 and experience == 0:
+        issues.append(f"experience=0, но в qualification: «{m.group(0)}»")
+
+    if REMOTE_RE.search(duty) and OFFICE_RE.search(qualification):
+        issues.append("duty: удалёнка, qualification: обязательное присутствие в офисе")
+
+    if FLEX_RE.search(schedule) and WEEKDAY_RE.search(qualification):
+        issues.append("schedule «гибкий», но qualification фиксирует пятидневку")
+
+    if (salary_lo in (0, None)) and (salary_hi in (0, None)):
+        issues.append("заработная плата не указана (0/0)")
+
+    if title in VAGUE_TITLES:
+        issues.append(f"расплывчатое название вакансии: «{title}»")
+
+    for loc in parse_addresses(v.get("addresses")):
+        if is_vague_location(loc):
+            issues.append(f"адрес слишком общий: «{loc}»")
+
+    if is_unknown(req.get("education")):
+        issues.append("образование не указано")
+
+    return issues
+
+
+def normalize_vacancy(v: dict) -> dict:
+    req = v.get("requirement") or {}
+    return {
+        "id": clean_text(v.get("id")),
+        "source": clean_text(v.get("source")),
+        "region_code": clean_text((v.get("region") or {}).get("region_code")),
+        "region_name": clean_text((v.get("region") or {}).get("name")),
+        "company_name": clean_text((v.get("company") or {}).get("name")),
+        "company_code": clean_text((v.get("company") or {}).get("companycode")),
+        "creation_date": clean_text(v.get("creation-date")),
+        "job_name": clean_text(v.get("job-name")),
+        "employment": clean_text(v.get("employment")),
+        "schedule": clean_text(v.get("schedule")),
+        "duty": clean_text(v.get("duty")),
+        "requirements": clean_text(v.get("requirements")),
+        "education": clean_text(req.get("education")),
+        "experience_years": clean_int(req.get("experience")),
+        "qualification": clean_text(req.get("qualification")),
+        "salary": clean_salary(
+            v.get("salary_min"), v.get("salary_max"), v.get("currency")
+        ),
+        "addresses": parse_addresses(v.get("addresses")),
+    }
+
+
+def clean_payload(raw: dict):
+    cleaned = []
+    report = []
+    seen_ids = set()
+
+    wrappers = (raw.get("results") or {}).get("vacancies") or []
+    log.debug("Секция results.vacancies содержит %d записей", len(wrappers))
+
+    for idx, wrapper in enumerate(wrappers, start=1):
+        v = wrapper.get("vacancy") or {}
+        vid = clean_text(v.get("id"))
+        log.debug("[%d/%d] Разбор вакансии id=%s", idx, len(wrappers), vid)
+
+        issues = detect_issues(v)
+        for issue in issues:
+            log.debug("  найдено: %s", issue)
+
+        if vid in seen_ids:
+            log.warning("Дубликат id=%s, запись пропущена", vid)
+            issues.append(f"дубликат id «{vid}» - запись пропущена")
+            report.append({"id": vid, "issues": issues})
+            continue
+        seen_ids.add(vid)
+
+        cleaned.append(normalize_vacancy(v))
+        if issues:
+            report.append({"id": vid, "issues": issues})
+
+    meta = raw.get("meta") or {}
+    result = {
+        "meta": {
+            "total_in_source": clean_int(meta.get("total")),
+            "clean_count": len(cleaned),
+            "issue_count": len(report),
+        },
+        "vacancies": cleaned,
+    }
+    return result, report
+
+
+def run(raw_path: Path, clean_path: Path, issues_path: Path) -> int:
+    if not raw_path.exists():
+        log.error("Файл не найден: %s", raw_path)
+        return 2
+
+    log.debug("Чтение исходного файла: %s", raw_path)
+    try:
+        raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        log.error("Невалидный JSON в %s: %s", raw_path, exc)
+        return 3
+    except OSError as exc:
+        log.error("Ошибка чтения %s: %s", raw_path, exc)
+        return 4
+
+    cleaned, report = clean_payload(raw)
+
+    try:
+        clean_path.write_text(
+            json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        issues_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except OSError as exc:
+        log.error("Ошибка записи результата: %s", exc)
+        return 5
+
+    log.info("Чистых вакансий:        %d", cleaned["meta"]["clean_count"])
+    log.info("Записей с замечаниями:  %d", cleaned["meta"]["issue_count"])
+    log.info("Результат: %s, %s", clean_path.name, issues_path.name)
+    return 0
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Очистка сырого JSON с вакансиями.")
+    parser.add_argument("--test", dest="test", action="store_true",
+                        help=f"Взять {JSON_FILENAME} из папки {TEST_FOLDER}/")
+    parser.add_argument("--no-test", dest="test", action="store_false",
+                        help=f"Взять {JSON_FILENAME} из текущей папки")
+    parser.set_defaults(test=USE_TEST_FOLDER)
+    parser.add_argument("--clean", type=Path, default=Path(CLEAN_FILENAME))
+    parser.add_argument("--issues", type=Path, default=Path(ISSUES_FILENAME))
+    parser.add_argument("--debug", action="store_true", help="Подробный вывод в stderr")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+
+    global log
+    log = setup_logging(args.debug)
+    log.setLevel(logging.DEBUG)
+
+    raw_path = resolve_raw_path(args.test)
+    log.debug("Каталог-источник: %s", "test/" if args.test else ".")
+
+    try:
+        return run(raw_path, args.clean, args.issues)
+    except Exception:
+        log.exception("Непредвиденная ошибка")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+
+
