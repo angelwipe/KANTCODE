@@ -1,0 +1,52 @@
+[
+  {
+    "vacancy_id": "DEMO-39-001",
+    "job_name": "Специалист по документообороту",
+    "error": "'list' object has no attribute 'message'"
+  },
+  {
+    "vacancy_id": "DEMO-39-002",
+    "job_name": "Помощник администратора",
+    "error": "'list' object has no attribute 'message'"
+  },
+  {
+    "vacancy_id": "DEMO-39-003",
+    "job_name": "Младший аналитик данных",
+    "error": "'list' object has no attribute 'message'"
+  },
+  {
+    "vacancy_id": "DEMO-39-004",
+    "job_name": "Оператор контактного центра",
+    "error": "'list' object has no attribute 'message'"
+  },
+  {
+    "vacancy_id": "DEMO-39-005",
+    "job_name": "Библиотекарь",
+    "error": "'list' object has no attribute 'message'"
+  },
+  {
+    "vacancy_id": "DEMO-39-006",
+    "job_name": "Специалист",
+    "error": "'list' object has no attribute 'message'"
+  },
+  {
+    "vacancy_id": "DEMO-39-007",
+    "job_name": "Инженер технической поддержки",
+    "error": "'list' object has no attribute 'message'"
+  },
+  {
+    "vacancy_id": "DEMO-39-008",
+    "job_name": "Координатор проектов",
+    "error": "'list' object has no attribute 'message'"
+  },
+  {
+    "vacancy_id": "DEMO-39-009",
+    "job_name": "Оператор ввода данных",
+    "error": "'list' object has no attribute 'message'"
+  },
+  {
+    "vacancy_id": "DEMO-39-010",
+    "job_name": "Методист образовательных программ",
+    "error": "'list' object has no attribute 'message'"
+  }
+]
